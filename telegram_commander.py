@@ -70,7 +70,7 @@ class TelegramCommander:
                 f"⏰ <b>Server Time:</b> <code>{now_str}</code>\n"
                 f"📡 <b>Scan Cycle:</b> Every <code>{config.SCAN_INTERVAL_SECONDS}s</code>\n"
                 f"🛡️ <b>BTC Trend Filter:</b> {btc_shield}\n"
-                f"💰 <b>Pair Filters:</b> Vol > ${config.MIN_24H_VOLUME_USDT/1e6:.1f}M | MCap <= ${config.MAX_MARKET_CAP_USDT/1e6:.0f}M\n"
+                f"💰 <b>Pair Filters:</b> Vol &gt; ${config.MIN_24H_VOLUME_USDT/1e6:.1f}M | MCap &le; ${config.MAX_MARKET_CAP_USDT/1e6:.0f}M\n"
                 f"━━━━━━━━━━━━━━━━━━━━━\n"
                 f"📡 <b>7-Day Signal Tracker:</b>\n"
                 f"  • Actively Monitoring: <b>{stats['actively_monitoring']} coins</b>\n"
