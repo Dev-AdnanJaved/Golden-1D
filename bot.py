@@ -19,6 +19,7 @@ from strategy import (
 )
 from telegram_notifier import TelegramNotifier
 from signal_tracker import SignalTracker
+from telegram_commander import TelegramCommander
 
 # Reconfigure stdout/stderr to UTF-8 for Windows console emoji support
 if hasattr(sys.stdout, "reconfigure"):
@@ -254,14 +255,30 @@ class BinanceScannerBot:
                 await self.run_scan_cycle(client, target_symbol=target_symbol)
                 return
 
-            while True:
-                try:
-                    await self.run_scan_cycle(client)
-                except Exception as e:
-                    logger.error(f"Error during scan cycle: {e}", exc_info=True)
+            # Send Startup Notification when 24/7 bot starts
+            if self.notifier.is_configured():
+                logger.info("Sending bot startup notification to Telegram...")
+                await self.notifier.send_startup_alert()
 
-                logger.info(f"Sleeping for {config.SCAN_INTERVAL_SECONDS}s until next scan...")
-                await asyncio.sleep(config.SCAN_INTERVAL_SECONDS)
+            # Initialize and run interactive Telegram command listener
+            self.commander = TelegramCommander(
+                self.notifier,
+                self.tracker,
+                scan_callback=lambda: self.run_scan_cycle(client)
+            )
+            listener_task = asyncio.create_task(self.commander.listen_for_commands(client))
+
+            try:
+                while True:
+                    try:
+                        await self.run_scan_cycle(client)
+                    except Exception as e:
+                        logger.error(f"Error during scan cycle: {e}", exc_info=True)
+
+                    logger.info(f"Sleeping for {config.SCAN_INTERVAL_SECONDS}s until next scan...")
+                    await asyncio.sleep(config.SCAN_INTERVAL_SECONDS)
+            finally:
+                listener_task.cancel()
 
 
 def main():

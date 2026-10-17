@@ -245,3 +245,33 @@ class TelegramNotifier:
             f"⏰ <i>{time_str}</i>"
         )
         return await self.send_message(text)
+
+    async def send_startup_alert(self) -> bool:
+        """Send startup notification when bot is booted for the first time."""
+        time_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        btc_filter_status = "🛡️ <b>ENABLED</b> (Shield ON)" if config.ENABLE_BTC_TREND_FILTER else "⚠️ <b>DISABLED</b>"
+
+        text = (
+            f"🚀 <b>BINANCE FUTURES SCANNER BOT ONLINE!</b> 🚀\n\n"
+            f"🟢 <b>Status:</b> 24/7 Scanning & 7-Day Monitoring Active\n"
+            f"⏰ <b>Start Time:</b> <code>{time_str}</code>\n"
+            f"📡 <b>Scan Frequency:</b> Every <code>{config.SCAN_INTERVAL_SECONDS}s</code>\n"
+            f"🛡️ <b>BTC Trend Filter:</b> {btc_filter_status}\n"
+            f"📊 <b>Pair Filters:</b> Vol > ${config.MIN_24H_VOLUME_USDT/1e6:.1f}M | MCap <= ${config.MAX_MARKET_CAP_USDT/1e6:.0f}M\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"📋 <b>ACTIVE STRATEGY RULES:</b>\n"
+            f"1️⃣ <b>1D Macro:</b> Price > 50 EMA\n"
+            f"2️⃣ <b>4H Cross:</b> 50 EMA crossed above 200 EMA (Golden Cross)\n"
+            f"3️⃣ <b>1H Volume:</b> 7-Bar average > 24-Bar baseline\n"
+            f"4️⃣ <b>Auto-Tracker:</b> 7-Day TP/SL tracking with milestone alerts\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"💡 <b>INTERACTIVE COMMANDS AVAILABLE:</b>\n"
+            f"Send any of these commands to this chat anytime:\n"
+            f"• <code>/status</code> - Real-time bot health & uptime\n"
+            f"• <code>/tracked</code> - View all coins actively monitored\n"
+            f"• <code>/stats</code> - Win rate, TP hits & SL counts\n"
+            f"• <code>/btc</code> - Check Bitcoin 1D/4H trend health\n"
+            f"• <code>/scan</code> - Trigger an instant on-demand scan\n"
+            f"• <code>/help</code> - Show commands menu"
+        )
+        return await self.send_message(text)
