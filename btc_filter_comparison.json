@@ -1,0 +1,27 @@
+{
+  "btc_filter_disabled": {
+    "setups": 134,
+    "wins": 103,
+    "losses": 31,
+    "win_rate": 76.87,
+    "avg_return": 6.97,
+    "total_return": 934.44,
+    "profit_factor": 5.47
+  },
+  "btc_filter_enabled": {
+    "setups": 120,
+    "wins": 92,
+    "losses": 28,
+    "win_rate": 76.67,
+    "avg_return": 6.67,
+    "total_return": 800.71,
+    "profit_factor": 5.13
+  },
+  "blocked_trades": {
+    "total_blocked": 14,
+    "wins": 11,
+    "losses": 3,
+    "win_rate": 78.57,
+    "net_return": 133.74
+  }
+}

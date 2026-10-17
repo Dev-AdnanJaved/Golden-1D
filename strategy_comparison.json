@@ -1,0 +1,30 @@
+[
+  {
+    "name": "Strategy 1: Fixed 1:1.5 R:R (SL -7%, TP +10.5%)",
+    "win_rate": 67.97,
+    "avg_return_per_trade": 4.55,
+    "total_net_return": 582.38,
+    "profit_factor": 3.17
+  },
+  {
+    "name": "Strategy 2: Fixed 1:2 R:R (SL -7%, TP +14.0%)",
+    "win_rate": 64.84,
+    "avg_return_per_trade": 5.47,
+    "total_net_return": 699.75,
+    "profit_factor": 3.36
+  },
+  {
+    "name": "Strategy 3: Institutional 3-Tier Scale-Out (TP1 +8%, BE, TP2 +20%, Runner)",
+    "win_rate": 71.88,
+    "avg_return_per_trade": 3.76,
+    "total_net_return": 480.92,
+    "profit_factor": 2.96
+  },
+  {
+    "name": "Strategy 4: Trailing Stop (Trail 7% after +10% gain)",
+    "win_rate": 68.75,
+    "avg_return_per_trade": 3.87,
+    "total_net_return": 495.98,
+    "profit_factor": 2.89
+  }
+]

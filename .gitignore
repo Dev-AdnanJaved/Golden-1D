@@ -1,0 +1,33 @@
+# Environment variables and secrets
+.env
+
+# Python cache and bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environment
+venv/
+env/
+ENV/
+
+# Logs
+*.log
+bot.log
+
+# Caches and runtime state
+alert_history.json
+market_caps_cache.json
+test_tracked_signals.json
+*.tmp
+
+# Screenshots
+*.png
+*.jpg
+*.jpeg
+
+# IDE settings
+.vscode/
+.idea/

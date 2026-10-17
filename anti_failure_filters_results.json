@@ -1,0 +1,66 @@
+[
+  {
+    "name": "Baseline (No Extra Anti-Failure Filters)",
+    "trades": 128,
+    "win_rate": 77.34375,
+    "avg_pnl": 6.661112852456639,
+    "tot_ret": 852.6224451144498,
+    "pf": 5.430825968075764
+  },
+  {
+    "name": "Filter 1: Volume Filter Made HARD (1H 7h > 24h Vol)",
+    "trades": 68,
+    "win_rate": 80.88235294117648,
+    "avg_pnl": 6.378441330638142,
+    "tot_ret": 433.73401048339366,
+    "pf": 5.501791792063687
+  },
+  {
+    "name": "Filter 2: BTC Trend Filter (BTC 4H > 50 EMA)",
+    "trades": 116,
+    "win_rate": 77.58620689655173,
+    "avg_pnl": 6.591655591598681,
+    "tot_ret": 764.632048625447,
+    "pf": 5.213868566944915
+  },
+  {
+    "name": "Filter 3: Non-Overextended Only (Entry <= +8% from 200 EMA)",
+    "trades": 62,
+    "win_rate": 72.58064516129032,
+    "avg_pnl": 7.282464054939414,
+    "tot_ret": 451.51277140624364,
+    "pf": 5.958668600646465
+  },
+  {
+    "name": "Filter 4: 50 EMA Upward Slope Required",
+    "trades": 128,
+    "win_rate": 77.34375,
+    "avg_pnl": 6.661112852456639,
+    "tot_ret": 852.6224451144498,
+    "pf": 5.430825968075764
+  },
+  {
+    "name": "Combo A: Baseline + BTC Trend Filter",
+    "trades": 116,
+    "win_rate": 77.58620689655173,
+    "avg_pnl": 6.591655591598681,
+    "tot_ret": 764.632048625447,
+    "pf": 5.213868566944915
+  },
+  {
+    "name": "Combo B: Baseline + BTC Trend + Non-Overextended",
+    "trades": 57,
+    "win_rate": 73.68421052631578,
+    "avg_pnl": 7.8406747826008605,
+    "tot_ret": 446.91846260824906,
+    "pf": 6.580786152002025
+  },
+  {
+    "name": "Combo C: Volume HARD + BTC Trend + Non-Overextended (Ultra Strict)",
+    "trades": 24,
+    "win_rate": 79.16666666666666,
+    "avg_pnl": 8.546518101261924,
+    "tot_ret": 205.11643443028618,
+    "pf": 8.761326513333104
+  }
+]
