@@ -47,6 +47,7 @@ class TelegramCommander:
             return (
                 f"🤖 <b>BINANCE FUTURES SCANNER BOT - COMMAND MENU</b> 🤖\n\n"
                 f"Use these commands anytime to monitor and control your scanner:\n\n"
+                f"🪙 <code>/coin &lt;SYMBOL&gt;</code> - Full 7-day stats or live analysis of any coin (e.g. <code>/coin NEAR</code>)\n"
                 f"📊 <code>/status</code> - Bot health, uptime, settings & scan info\n"
                 f"📡 <code>/tracked</code> - View all coins currently in 7-day monitoring\n"
                 f"📈 <code>/stats</code> - Win rate, TP milestone hits & SL summary\n"
@@ -177,6 +178,105 @@ class TelegramCommander:
             else:
                 return "⚠️ Manual scan trigger not attached."
 
+        # 7. /coin <SYMBOL> or /check <SYMBOL> or /<SYMBOL>
+        else:
+            target_sym = None
+            if cmd.startswith("/coin ") or cmd.startswith("/check ") or cmd.startswith("/info "):
+                parts = cmd.split()
+                if len(parts) > 1:
+                    target_sym = parts[1].strip()
+            elif cmd.startswith("/") and len(cmd) > 1:
+                cand = cmd[1:].strip()
+                # Accept tickers like /near, /sol, /btc, /1000pepe, /doge
+                if cand.replace("1000", "").isalnum():
+                    target_sym = cand
+
+            if target_sym:
+                target_sym = target_sym.upper()
+                if not target_sym.endswith("USDT"):
+                    target_sym += "USDT"
+
+                def fmt_p(val):
+                    return f"{val:,.2f}" if val >= 100 else (f"{val:.4f}" if val >= 1 else f"{val:.6f}")
+
+                # 1. Search in 7-day signal tracker
+                matching = [s for s in self.tracker.signals.values() if s.symbol == target_sym]
+                if matching:
+                    sig = sorted(matching, key=lambda x: x.entry_time)[-1]
+                    now = time.time()
+                    cur_price = sig.current_price
+                    entry = sig.entry_price
+                    cur_gain = ((cur_price - entry) / entry) * 100.0 if entry > 0 else 0.0
+
+                    rem_h = max(0.0, (sig.monitored_until - now) / 3600.0)
+                    rem_d = rem_h / 24.0
+                    time_info = f"<code>{rem_d:.1f} days ({rem_h:.0f}h)</code> remaining" if sig.status == "MONITORING" else f"Completed on {sig.completed_date}"
+
+                    tps = ", ".join([f"+{t}%" for t in sig.tps_hit]) if sig.tps_hit else "None reached yet"
+                    sl_str = f"🔴 <b>HIT</b> ({sig.sl_reason})" if sig.sl_hit else "🟢 <b>SAFE (Not Triggered)</b>"
+                    status_icon = "🟢 <b>ACTIVELY MONITORING</b>" if sig.status == "MONITORING" else "🏁 <b>7-DAY TRACKING COMPLETED</b>"
+
+                    events_str = ""
+                    if sig.events_log:
+                        recent_events = sig.events_log[-4:]
+                        ev_lines = [f"• <i>{ev.get('time','')}</i>: {ev.get('message','')}" for ev in recent_events]
+                        events_str = "\n\n📜 <b>RECENT EVENTS:</b>\n" + "\n".join(ev_lines)
+
+                    return (
+                        f"💎 <b>7-DAY SIGNAL REPORT: #{sig.symbol}</b> 💎\n\n"
+                        f"📊 <b>Status:</b> {status_icon}\n"
+                        f"⏰ <b>Entry Time:</b> <code>{sig.entry_date}</code>\n"
+                        f"💰 <b>Entry Price:</b> <code>${fmt_p(entry)}</code>\n"
+                        f"📈 <b>Current Price:</b> <code>${fmt_p(cur_price)}</code> (<b>{cur_gain:+.2f}%</b>)\n"
+                        f"🚀 <b>Max Gain Achieved:</b> <code>+{sig.max_gain_pct:.2f}%</code>\n"
+                        f"📉 <b>Max Drawdown:</b> <code>{sig.max_loss_pct:.2f}%</code>\n"
+                        f"🎯 <b>Milestones Reached:</b> <code>{tps}</code>\n"
+                        f"🛑 <b>Stop Loss Status:</b> {sl_str}\n"
+                        f"⏱️ <b>7-Day Window:</b> {time_info}"
+                        f"{events_str}\n\n"
+                        f"📈 <a href=\"https://www.binance.com/en/futures/{sig.symbol}\">Open on Binance Futures</a>"
+                    )
+                else:
+                    # 2. Live technical analysis on unmonitored coin
+                    try:
+                        kl_4h = await client.get_klines(target_sym, interval="4h", limit=250)
+                        kl_1d = await client.get_klines(target_sym, interval="1d", limit=120)
+                        if not kl_4h or not kl_1d:
+                            return f"⚠️ Could not find active futures pair <code>#{target_sym}</code> on Binance."
+
+                        cur_price = float(kl_4h[-1]["close"])
+                        c_4h = pd.Series([float(k["close"]) for k in kl_4h])
+                        ema50_4h = c_4h.ewm(span=50, adjust=False).mean().iloc[-1]
+                        ema200_4h = c_4h.ewm(span=200, adjust=False).mean().iloc[-1]
+
+                        c_1d = pd.Series([float(k["close"]) for k in kl_1d])
+                        ema50_1d = c_1d.ewm(span=50, adjust=False).mean().iloc[-1]
+                        last_1d_close = c_1d.iloc[-1]
+
+                        r1_pass = last_1d_close > ema50_1d
+                        r2_pass = ema50_4h > ema200_4h
+                        spread = ((ema50_4h - ema200_4h) / ema200_4h) * 100.0
+
+                        r1_badge = "✅ <b>PASSED (Above 50 EMA)</b>" if r1_pass else "❌ <b>FAILED (Below 50 EMA)</b>"
+                        r2_badge = f"✅ <b>BULLISH (+{spread:.2f}%)</b>" if r2_pass else f"❌ <b>BEARISH ({spread:.2f}%)</b>"
+                        verdict = "🔥 <b>GOLDEN ALIGNMENT ACTIVE</b>" if (r1_pass and r2_pass) else "⏳ <b>WAITING FOR ALIGNMENT</b>"
+
+                        return (
+                            f"🔍 <b>LIVE ANALYSIS: #{target_sym}</b> 🔍\n\n"
+                            f"💰 <b>Current Price:</b> <code>${fmt_p(cur_price)}</code>\n"
+                            f"━━━━━━━━━━━━━━━━━━━━━\n"
+                            f"1️⃣ <b>1D Macro vs 50 EMA:</b> {r1_badge}\n"
+                            f"   • 1D Close: <code>${fmt_p(last_1d_close)}</code> | 50 EMA: <code>${fmt_p(ema50_1d)}</code>\n\n"
+                            f"2️⃣ <b>4H 50/200 EMA Spread:</b> {r2_badge}\n"
+                            f"   • 4H 50 EMA: <code>${fmt_p(ema50_4h)}</code>\n"
+                            f"   • 4H 200 EMA: <code>${fmt_p(ema200_4h)}</code>\n\n"
+                            f"━━━━━━━━━━━━━━━━━━━━━\n"
+                            f"📋 <b>Verdict:</b> {verdict}\n"
+                            f"<i>Note: No active signal in 7-day tracker for this coin.</i>"
+                        )
+                    except Exception as e:
+                        return f"⚠️ Error analyzing #{target_sym}: {e}"
+
         return None
 
     async def _trigger_manual_scan(self):
@@ -233,3 +333,4 @@ class TelegramCommander:
                     await asyncio.sleep(3)
 
                 await asyncio.sleep(1)
+
