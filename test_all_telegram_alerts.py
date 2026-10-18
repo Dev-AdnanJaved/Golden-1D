@@ -205,3 +205,4 @@ async def run_all_alerts_test():
 
 if __name__ == "__main__":
     asyncio.run(run_all_alerts_test())
+

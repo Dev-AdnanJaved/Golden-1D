@@ -6,7 +6,8 @@ import os
 import sys
 import time
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Any
 
 from colorama import Fore, Style, init
 from config import config
@@ -15,7 +16,10 @@ from strategy import (
     evaluate_rule_2_4h_cross,
     evaluate_rule_1_daily,
     evaluate_rule_3_volume,
-    SignalResult
+    SignalResult,
+    Rule1DailyResult,
+    Rule24HResult,
+    Rule3VolumeResult
 )
 from telegram_notifier import TelegramNotifier
 from signal_tracker import SignalTracker
@@ -84,6 +88,20 @@ class AlertHistoryManager:
         }
 
 
+@dataclass
+class SymbolScanResult:
+    symbol: str
+    is_valid_signal: bool
+    signal: Optional[SignalResult]
+    r1: Optional[Rule1DailyResult]
+    r2: Optional[Rule24HResult]
+    r3: Optional[Rule3VolumeResult]
+    current_price: float
+    vol_24h: float
+    mcap: Optional[float]
+    rejection_reason: str
+
+
 class BinanceScannerBot:
     def __init__(self):
         self.alert_history = AlertHistoryManager()
@@ -96,45 +114,94 @@ class BinanceScannerBot:
         symbol: str,
         vol_24h: float = 0.0,
         mcap: Optional[float] = None
-    ) -> Optional[SignalResult]:
+    ) -> SymbolScanResult:
         """
-        Evaluate a single symbol step-by-step:
-        1. 4H EMA cross (Rule 2) - checked first for efficiency
-        2. 1D EMA 50 (Rule 1)
-        3. 1H Volume (Rule 3)
+        Evaluate a single symbol across all timeframes:
+        1. 4H and 1D Kline fetched concurrently
+        2. Evaluate Rule 1 (1D > 50 EMA) & Rule 2 (4H 50/200 cross)
+        3. If both pass, evaluate Rule 3 (1H Volume filter)
         """
-        # Step 1: 4H Kline
-        klines_4h = await client.get_klines(symbol, interval="4h", limit=400)
-        if not klines_4h:
-            return None
+        try:
+            klines_4h, klines_1d = await asyncio.gather(
+                client.get_klines(symbol, interval="4h", limit=400),
+                client.get_klines(symbol, interval="1d", limit=120),
+                return_exceptions=True
+            )
+        except Exception as e:
+            return SymbolScanResult(
+                symbol=symbol,
+                is_valid_signal=False,
+                signal=None,
+                r1=None,
+                r2=None,
+                r3=None,
+                current_price=0.0,
+                vol_24h=vol_24h,
+                mcap=mcap,
+                rejection_reason=f"Network error: {e}"
+            )
 
-        r2 = evaluate_rule_2_4h_cross(klines_4h)
-        if not r2.passed:
-            return None
-
-        logger.info(f"{Fore.GREEN}[4H CROSS MATCH]{Style.RESET_ALL} {symbol}: 50 EMA crossed 200 EMA ({r2.trigger_type})")
-
-        # Step 2: 1D Kline
-        klines_1d = await client.get_klines(symbol, interval="1d", limit=120)
-        if not klines_1d:
-            return None
+        if not klines_4h or isinstance(klines_4h, Exception) or not klines_1d or isinstance(klines_1d, Exception):
+            return SymbolScanResult(
+                symbol=symbol,
+                is_valid_signal=False,
+                signal=None,
+                r1=None,
+                r2=None,
+                r3=None,
+                current_price=0.0,
+                vol_24h=vol_24h,
+                mcap=mcap,
+                rejection_reason="Insufficient candle history on Binance"
+            )
 
         r1 = evaluate_rule_1_daily(klines_1d)
-        if not r1.passed:
-            logger.info(f"{Fore.YELLOW}[1D FAILED]{Style.RESET_ALL} {symbol}: 1D candle not above 50 EMA")
-            return None
-
-        logger.info(f"{Fore.GREEN}[1D PASSED]{Style.RESET_ALL} {symbol}: 1D candle above 50 EMA")
-
-        # Step 3: 1H Kline (Soft Volume Filter)
-        klines_1h = await client.get_klines(symbol, interval="1h", limit=35)
-        if not klines_1h:
-            return None
-
-        r3 = evaluate_rule_3_volume(klines_1h)
-
+        r2 = evaluate_rule_2_4h_cross(klines_4h)
         current_price = klines_4h[-1]["close"]
         candle_time = klines_4h[-1]["open_time"]
+
+        # If Rule 1 or Rule 2 fails:
+        if not r1.passed or not r2.passed:
+            if not r1.passed and not r2.passed:
+                if r2.diff_pct > 0:
+                    reason = f"1D < 50 EMA & 4H already above (old cross, Diff +{r2.diff_pct:.2f}%)"
+                elif abs(r2.diff_pct) <= 0.8:
+                    reason = f"1D < 50 EMA & 4H near cross (Diff {r2.diff_pct:+.2f}%)"
+                else:
+                    reason = f"1D < 50 EMA & 4H 50 EMA < 200 EMA (Diff {r2.diff_pct:+.2f}%)"
+            elif not r1.passed and r2.passed:
+                reason = f"1D candle below 50 EMA (${r1.current_close:.4f} < ${r1.ema50:.4f}) despite 4H cross"
+            elif r1.passed and not r2.passed:
+                if r2.diff_pct > 0:
+                    reason = f"4H no fresh cross (already above 200 EMA, Diff +{r2.diff_pct:.2f}%)"
+                elif abs(r2.diff_pct) <= 0.8:
+                    reason = f"4H approaching cross (Diff {r2.diff_pct:+.2f}%, watching for trigger!)"
+                else:
+                    reason = f"4H 50 EMA < 200 EMA (Diff {r2.diff_pct:+.2f}%, no cross)"
+            else:
+                reason = "Conditions not satisfied"
+
+            return SymbolScanResult(
+                symbol=symbol,
+                is_valid_signal=False,
+                signal=None,
+                r1=r1,
+                r2=r2,
+                r3=None,
+                current_price=current_price,
+                vol_24h=vol_24h,
+                mcap=mcap,
+                rejection_reason=reason
+            )
+
+        # Both Rule 1 and Rule 2 passed! Evaluate Rule 3 (Soft Volume Filter)
+        klines_1h = await client.get_klines(symbol, interval="1h", limit=35)
+        if not klines_1h:
+            r3 = Rule3VolumeResult(
+                passed=True, avg_vol_7=0.0, avg_vol_24=0.0, ratio_pct=0.0, details="1H data unavailable"
+            )
+        else:
+            r3 = evaluate_rule_3_volume(klines_1h)
 
         signal = SignalResult(
             symbol=symbol,
@@ -148,12 +215,24 @@ class BinanceScannerBot:
             vol_24h=vol_24h,
             mcap=mcap
         )
-        return signal
 
-    async def run_scan_cycle(self, client: BinanceFuturesClient, target_symbol: Optional[str] = None):
+        return SymbolScanResult(
+            symbol=symbol,
+            is_valid_signal=True,
+            signal=signal,
+            r1=r1,
+            r2=r2,
+            r3=r3,
+            current_price=current_price,
+            vol_24h=vol_24h,
+            mcap=mcap,
+            rejection_reason="ALL CONDITIONS MET (SIGNAL DETECTED)"
+        )
+
+    async def run_scan_cycle(self, client: BinanceFuturesClient, target_symbol: Optional[str] = None) -> Dict[str, Any]:
         """
         Execute filtered scan across active Binance Futures USDT pairs.
-        Filters: 24h Vol >= $1M USDT and Market Cap <= $500M USDT
+        Filters: 24h Vol >= $1M USDT and Market Cap <= $1000M USDT
         """
         start_time = time.time()
         now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -169,14 +248,19 @@ class BinanceScannerBot:
 
         if not target_list:
             logger.error("No qualifying USDT pairs retrieved. Will retry on next scan.")
-            return
+            return {}
 
         total_pairs = len(target_list)
         print(f"Scanning {Fore.YELLOW}{total_pairs}{Style.RESET_ALL} qualifying pairs for 4H 50/200 EMA cross...")
+        print(f"{Fore.LIGHTBLACK_EX}Evaluating Rule 1 (1D > 50 EMA) & Rule 2 (4H 50/200 Golden Cross) pair by pair:{Style.RESET_ALL}\n")
 
-        # Process in batches with high concurrency
-        batch_size = 35
+        # Process in concurrent batches
+        batch_size = 25
         detected_signals: List[SignalResult] = []
+        all_evaluations: List[SymbolScanResult] = []
+        pair_counter = 0
+        r1_passed_count = 0
+        r2_above_count = 0
 
         for i in range(0, total_pairs, batch_size):
             batch = target_list[i:i + batch_size]
@@ -184,16 +268,80 @@ class BinanceScannerBot:
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
             for res in results:
-                if isinstance(res, SignalResult) and res.is_valid_signal:
-                    detected_signals.append(res)
+                if not isinstance(res, SymbolScanResult):
+                    continue
+                pair_counter += 1
+                all_evaluations.append(res)
+
+                if res.r1 and res.r1.passed:
+                    r1_passed_count += 1
+                if res.r2 and res.r2.diff_pct > 0:
+                    r2_above_count += 1
+
+                # 1D column formatting
+                if res.r1 and res.r1.passed:
+                    d_col = f"{Fore.GREEN}1D: PASSED{Style.RESET_ALL} (Close > 50 EMA)"
+                elif res.r1:
+                    d_col = f"{Fore.RED}1D: FAIL{Style.RESET_ALL} (Close < 50 EMA)"
+                else:
+                    d_col = f"{Fore.LIGHTBLACK_EX}1D: N/A{Style.RESET_ALL}"
+
+                # 4H column formatting
+                if res.r2 and res.r2.passed:
+                    h4_col = f"{Fore.GREEN}4H: FRESH CROSS!{Style.RESET_ALL} ({res.r2.diff_pct:+.2f}%)"
+                elif res.r2 and res.r2.diff_pct > 0:
+                    h4_col = f"{Fore.YELLOW}4H: NO CROSS{Style.RESET_ALL} (Already above, +{res.r2.diff_pct:.2f}%)"
+                elif res.r2 and abs(res.r2.diff_pct) <= 0.8:
+                    h4_col = f"{Fore.CYAN}4H: NEAR CROSS{Style.RESET_ALL} ({res.r2.diff_pct:+.2f}%)"
+                elif res.r2:
+                    h4_col = f"{Fore.LIGHTBLACK_EX}4H: NO CROSS{Style.RESET_ALL} (50 < 200 EMA, {res.r2.diff_pct:+.2f}%)"
+                else:
+                    h4_col = f"{Fore.LIGHTBLACK_EX}4H: N/A{Style.RESET_ALL}"
+
+                # Status / Verdict column formatting
+                if res.is_valid_signal:
+                    verdict = f"{Fore.GREEN}🎯 [SIGNAL DETECTED] -> ALERT DISPATCHED!{Style.RESET_ALL}"
+                    detected_signals.append(res.signal)
+                    logger.info(f"[{pair_counter:3d}/{total_pairs}] #{res.symbol}: SIGNAL DETECTED! Price: ${res.current_price}")
+                else:
+                    verdict = f"{Fore.LIGHTBLACK_EX}❌ {res.rejection_reason}{Style.RESET_ALL}"
+
+                # Single-line log per pair
+                print(f"[{pair_counter:3d}/{total_pairs}] {Fore.MAGENTA}{res.symbol:12}{Style.RESET_ALL} | {d_col} | {h4_col} | {verdict}")
 
             # Brief pause to keep Binance rate limit very low
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.05)
 
         elapsed = time.time() - start_time
+        r1_pct = (r1_passed_count / total_pairs * 100) if total_pairs else 0
         print(f"\n{Fore.CYAN}{'-'*65}{Style.RESET_ALL}")
         print(f"✅ Scan completed in {Fore.GREEN}{elapsed:.2f}s{Style.RESET_ALL}. Pairs checked: {total_pairs}")
+        print(f"📊 Market Conditions Breakdown:")
+        print(f"  • Rule 1 (1D Candle > 50 EMA): {Fore.YELLOW}{r1_passed_count} / {total_pairs}{Style.RESET_ALL} pairs passed ({r1_pct:.1f}%)")
+        print(f"  • Rule 2 (4H 50 EMA > 200 EMA): {Fore.YELLOW}{r2_above_count} / {total_pairs}{Style.RESET_ALL} pairs currently above (Old crosses)")
+        print(f"  • Rule 2 (Fresh Golden Cross): {Fore.GREEN}{len(detected_signals)}{Style.RESET_ALL} pairs triggered in current/prev candle")
         print(f"Signals Found: {Fore.GREEN}{len(detected_signals)}{Style.RESET_ALL}")
+
+        # Watchlist: Top 5 closest pairs to Golden Cross (diff_pct nearest 0%)
+        closest_candidates = [
+            r for r in all_evaluations
+            if r.r2 is not None and not r.is_valid_signal
+        ]
+        closest_candidates.sort(key=lambda x: abs(x.r2.diff_pct))
+
+        top_closest_summary = []
+        if closest_candidates:
+            print(f"\n🔭 {Fore.CYAN}Top 5 Pairs Closest to 4H 50/200 EMA Cross (Watchlist):{Style.RESET_ALL}")
+            for c in closest_candidates[:5]:
+                d_pass = bool(c.r1 and c.r1.passed)
+                d_mark = f"{Fore.GREEN}1D > 50EMA: YES{Style.RESET_ALL}" if d_pass else f"{Fore.RED}1D > 50EMA: NO{Style.RESET_ALL}"
+                print(f"  • {Fore.MAGENTA}#{c.symbol:12}{Style.RESET_ALL} | 4H Spread: {c.r2.diff_pct:+.2f}% | Price: ${c.current_price} | {d_mark}")
+                top_closest_summary.append({
+                    "symbol": c.symbol,
+                    "diff": c.r2.diff_pct,
+                    "price": c.current_price,
+                    "1d_pass": d_pass
+                })
 
         if detected_signals:
             for sig in detected_signals:
@@ -234,6 +382,16 @@ class BinanceScannerBot:
             logger.error(f"Error updating 7-day tracker: {te}")
 
         print(f"{Fore.CYAN}{'='*65}{Style.RESET_ALL}\n")
+
+        return {
+            "total_pairs": total_pairs,
+            "r1_passed": r1_passed_count,
+            "r1_pct": r1_pct,
+            "r2_above": r2_above_count,
+            "signals_found": len(detected_signals),
+            "elapsed": elapsed,
+            "closest": top_closest_summary
+        }
 
     async def start(self, scan_once: bool = False, target_symbol: Optional[str] = None):
         """

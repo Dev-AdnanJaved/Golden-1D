@@ -315,7 +315,33 @@ class TelegramCommander:
         self.is_scanning = True
         try:
             if self.scan_callback:
-                await self.scan_callback()
+                summary = await self.scan_callback()
+                if summary and self.notifier.is_configured():
+                    elapsed = summary.get("elapsed", 0)
+                    total = summary.get("total_pairs", 0)
+                    signals = summary.get("signals_found", 0)
+                    r1_pass = summary.get("r1_passed", 0)
+                    r1_pct = summary.get("r1_pct", 0)
+                    r2_above = summary.get("r2_above", 0)
+
+                    msg = (
+                        f"⚡ <b>MANUAL SCAN COMPLETED</b> (in {elapsed:.1f}s)\n\n"
+                        f"Pairs Checked: <b>{total}</b>\n"
+                        f"Signals Found: <b>{signals}</b>\n\n"
+                        f"📊 <b>Market Conditions Breakdown:</b>\n"
+                        f"• 1D Candle &gt; 50 EMA: <b>{r1_pass} / {total}</b> ({r1_pct:.1f}%)\n"
+                        f"• 4H EMA 50 &gt; 200 EMA: <b>{r2_above}</b> (Already above, old crosses)\n"
+                        f"• 4H Fresh Golden Cross: <b>{signals}</b>\n"
+                    )
+
+                    top_closest = summary.get("closest", [])
+                    if top_closest:
+                        msg += "\n🔭 <b>Watchlist - Closest to 4H Cross:</b>\n"
+                        for c in top_closest[:5]:
+                            d_icon = "🟢 1D &gt; 50EMA" if c.get("1d_pass") else "🔴 1D &le; 50EMA"
+                            msg += f"• <b>#{c['symbol']}</b>: Spread <code>{c['diff']:+.2f}%</code> | {d_icon}\n"
+
+                    await self.notifier.send_message(msg)
         except Exception as e:
             logger.error(f"Manual scan error: {e}")
         finally:
