@@ -47,9 +47,10 @@ class TelegramCommander:
             return (
                 f"🤖 <b>BINANCE FUTURES SCANNER BOT - COMMAND MENU</b> 🤖\n\n"
                 f"Use these commands anytime to monitor and control your scanner:\n\n"
-                f"🪙 <code>/coin &lt;SYMBOL&gt;</code> - Full 7-day stats or live analysis of any coin (e.g. <code>/coin NEAR</code>)\n"
+                f"🚀 <code>/running</code> - View all running signals with live PnL, peak, drawdown & hours\n"
+                f"🪙 <code>/coin SYMBOL</code> - Full 7-day stats or live analysis of any coin (e.g. <code>/coin NEAR</code>)\n"
                 f"📊 <code>/status</code> - Bot health, uptime, settings & scan info\n"
-                f"📡 <code>/tracked</code> - View all coins currently in 7-day monitoring\n"
+                f"📡 <code>/tracked</code> - Same as /running (active monitored signals)\n"
                 f"📈 <code>/stats</code> - Win rate, TP milestone hits & SL summary\n"
                 f"₿ <code>/btc</code> - Real-time Bitcoin 1D & 4H trend health\n"
                 f"⚡ <code>/scan</code> - Trigger an immediate manual scan right now\n"
@@ -78,33 +79,64 @@ class TelegramCommander:
                 f"  • Completed 7-Day Window: <b>{stats['completed_7_days']}</b>"
             )
 
-        # 3. /tracked or /signals
-        elif cmd in ("/tracked", "/signals"):
+        # 3. /running, /tracked, /signals
+        elif cmd in ("/running", "/tracked", "/signals"):
             active = [s for s in self.tracker.signals.values() if s.status == "MONITORING"]
+            stats = self.tracker.get_summary_stats()
+            now = time.time()
+
+            def fmt_p(val):
+                return f"{val:,.2f}" if val >= 100 else (f"{val:.4f}" if val >= 1 else f"{val:.6f}")
+
             if not active:
                 return (
-                    f"📡 <b>7-DAY ACTIVE TRACKER</b> 📡\n\n"
-                    f"ℹ️ <i>No active signals currently being monitored.</i>\n"
-                    f"When a new golden cross alert triggers, it will appear here automatically for 7 full days."
+                    f"🚀 <b>RUNNING SIGNALS PORTFOLIO AUDIT</b> 🚀\n\n"
+                    f"ℹ️ <b>No signals currently running.</b>\n\n"
+                    f"• Total Signals Generated (Historical): <b>{stats['total_tracked']}</b>\n"
+                    f"• Completed 7-Day Cycles: <b>{stats['completed_7_days']}</b>\n"
+                    f"• Trades Reaching TP Targets: <b>{stats['trades_hitting_tp']}</b>\n"
+                    f"• Trades Triggering SL: <b>{stats['trades_hitting_sl']}</b>\n\n"
+                    f"💡 <i>Why no signals in last 12h?</i>\n"
+                    f"4H Golden Crosses are high-timeframe swing setups (~4-5 formed per day across 346 pairs). When the market pulls back or consolidates, quiet periods of 12-24h with 0 crosses are normal.\n\n"
+                    f"👉 Type <code>/btc</code> to check Bitcoin's trend health or <code>/scan</code> to force a manual scan now!"
                 )
 
-            lines = [f"📡 <b>ACTIVE 7-DAY SIGNALS ({len(active)} COINS)</b> 📡\n"]
-            now = time.time()
+            lines = [
+                f"🚀 <b>RUNNING SIGNALS PORTFOLIO AUDIT</b> 🚀\n"
+                f"Actively Running: <b>{len(active)}</b> | Total Generated: <b>{stats['total_tracked']}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+            ]
+
             for s in sorted(active, key=lambda x: x.entry_time, reverse=True):
-                rem_h = max(0.0, (s.monitored_until - now) / 3600.0)
+                running_secs = max(0.0, now - s.entry_time)
+                running_h = running_secs / 3600.0
+                running_d = running_h / 24.0
+
+                rem_secs = max(0.0, s.monitored_until - now)
+                rem_h = rem_secs / 3600.0
                 rem_d = rem_h / 24.0
+
+                cur_p = s.current_price
+                entry_p = s.entry_price
+                cur_gain = ((cur_p - entry_p) / entry_p) * 100.0 if entry_p > 0 else 0.0
+                gain_color = "🟢" if cur_gain >= 0 else "🔴"
+
                 tps = ", ".join([f"+{t}%" for t in s.tps_hit]) if s.tps_hit else "None yet"
-                sl_badge = "🔴 <b>SL Hit</b> (monitoring)" if s.sl_hit else "🟢 <b>SL Safe</b>"
-                cur_gain = ((s.current_price - s.entry_price) / s.entry_price) * 100.0
+                sl_badge = f"🔴 <b>SL Hit</b> ({s.sl_reason})" if s.sl_hit else "🟢 <b>SL Safe</b>"
 
                 lines.append(
                     f"💎 <b>#{s.symbol}</b>\n"
-                    f"  • Entry: <code>${s.entry_price}</code> | Current: <code>${s.current_price}</code> (<b>{cur_gain:+.2f}%</b>)\n"
-                    f"  • Max Gain: <code>+{s.max_gain_pct:.2f}%</code> | Drawdown: <code>{s.max_loss_pct:.2f}%</code>\n"
-                    f"  • TPs Reached: <code>{tps}</code>\n"
-                    f"  • SL Status: {sl_badge}\n"
-                    f"  • Remaining: <code>{rem_d:.1f} days ({rem_h:.0f}h)</code>\n"
+                    f"  • <b>Running Time:</b> <code>{running_h:.1f} hours ({running_d:.1f} days)</code>\n"
+                    f"  • <b>Entry:</b> <code>${fmt_p(entry_p)}</code> (at {s.entry_date})\n"
+                    f"  • <b>Current Price:</b> <code>${fmt_p(cur_p)}</code> ({gain_color} <b>{cur_gain:+.2f}%</b>)\n"
+                    f"  • <b>Max Peak Gain:</b> <code>+{s.max_gain_pct:.2f}%</code> 🚀\n"
+                    f"  • <b>Max Drawdown:</b> <code>{s.max_loss_pct:.2f}%</code> 📉\n"
+                    f"  • <b>Milestone TPs Hit:</b> <code>{tps}</code>\n"
+                    f"  • <b>Stop Loss Status:</b> {sl_badge}\n"
+                    f"  • <b>7-Day Remaining:</b> <code>{rem_d:.1f} days ({rem_h:.0f}h)</code>\n"
+                    f"  📈 <a href=\"https://www.binance.com/en/futures/{s.symbol}\">View Chart</a>\n"
                 )
+
             return "\n".join(lines)
 
         # 4. /stats
