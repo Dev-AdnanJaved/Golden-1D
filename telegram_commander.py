@@ -320,18 +320,22 @@ class TelegramCommander:
                     elapsed = summary.get("elapsed", 0)
                     total = summary.get("total_pairs", 0)
                     signals = summary.get("signals_found", 0)
+                    fresh_cnt = summary.get("signals_fresh", 0)
+                    recent_cnt = summary.get("signals_recent", 0)
                     r1_pass = summary.get("r1_passed", 0)
                     r1_pct = summary.get("r1_pct", 0)
                     r2_above = summary.get("r2_above", 0)
 
+                    count_breakdown = f" ({fresh_cnt} fresh, {recent_cnt} recent 48h)" if recent_cnt > 0 else ""
                     msg = (
                         f"⚡ <b>MANUAL SCAN COMPLETED</b> (in {elapsed:.1f}s)\n\n"
                         f"Pairs Checked: <b>{total}</b>\n"
-                        f"Signals Found: <b>{signals}</b>\n\n"
+                        f"Signals Found: <b>{signals}</b>{count_breakdown}\n\n"
                         f"📊 <b>Market Conditions Breakdown:</b>\n"
                         f"• 1D Candle &gt; 50 EMA: <b>{r1_pass} / {total}</b> ({r1_pct:.1f}%)\n"
-                        f"• 4H EMA 50 &gt; 200 EMA: <b>{r2_above}</b> (Already above, old crosses)\n"
-                        f"• 4H Fresh Golden Cross: <b>{signals}</b>\n"
+                        f"• 4H EMA 50 &gt; 200 EMA: <b>{r2_above}</b> (Total above)\n"
+                        f"• 4H Fresh Golden Cross: <b>{fresh_cnt}</b>\n"
+                        f"• 4H Recent Cross (&le;48h): <b>{recent_cnt}</b>\n"
                     )
 
                     top_closest = summary.get("closest", [])

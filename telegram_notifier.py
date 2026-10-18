@@ -58,6 +58,20 @@ class TelegramNotifier:
         # Fresh cross badge for 1D
         fresh_badge = " (Fresh Cross 🔥)" if r1.fresh_cross else " (Holding Above 50 EMA)"
 
+        # Freshness warning for 4H cross
+        is_fresh_4h = getattr(r2, "is_fresh", True)
+        hours_ago_4h = getattr(r2, "hours_ago", 0.0)
+        candles_ago_4h = getattr(r2, "candles_ago", 0)
+
+        if not is_fresh_4h:
+            h4_cross_header = f"⚠️ <b>WARNING: 4H CROSS IS NOT FRESH</b> (Formed {hours_ago_4h:.0f}h ago / {candles_ago_4h} candles ago)\n\n"
+            h4_cross_badge = f"⚠️ <b>PASSED (NOT FRESH - {hours_ago_4h:.0f}h AGO)</b>"
+            h4_cross_note = f"\n   ⚠️ <i>Warning: 4H 50/200 EMA cross occurred {hours_ago_4h:.0f}h ago ({candles_ago_4h} candles ago). Manage risk accordingly!</i>"
+        else:
+            h4_cross_header = ""
+            h4_cross_badge = "✅ <b>PASSED (FRESH CROSS 🔥)</b>"
+            h4_cross_note = ""
+
         # Calculate Champion 3-Tier Execution Plan
         sl_price = price * 0.88  # -12% Emergency Circuit Breaker
         tp1_price = price * 1.10  # +10% Target
@@ -72,6 +86,7 @@ class TelegramNotifier:
 
         msg = (
             f"🚀 <b>BINANCE FUTURES SIGNAL: BUY / LONG</b> 🚀\n\n"
+            f"{h4_cross_header}"
             f"💎 <b>Pair:</b> <code>#{sym}</code>\n"
             f"💰 <b>Entry Price:</b> <code>${price_str}</code>\n"
             f"📊 <b>24h Vol:</b> <code>{vol24_str}</code> | <b>MCap:</b> <code>{mcap_str}</code>\n\n"
@@ -86,11 +101,11 @@ class TelegramNotifier:
             f"1️⃣ <b>1D Candle vs 50 EMA:</b> ✅ <b>PASSED</b>\n"
             f"   • 1D Close: <code>{r1.current_close}</code>\n"
             f"   • 1D 50 EMA: <code>{r1.ema50:.4f}</code>{fresh_badge}\n\n"
-            f"2️⃣ <b>4H 50/200 EMA Cross:</b> ✅ <b>PASSED</b>\n"
+            f"2️⃣ <b>4H 50/200 EMA Cross:</b> {h4_cross_badge}\n"
             f"   • Trigger: <b>{r2.trigger_type}</b>\n"
             f"   • 4H 50 EMA: <code>{r2.ema50:.4f}</code>\n"
             f"   • 4H 200 EMA: <code>{r2.ema200:.4f}</code>\n"
-            f"   • Bullish Spread: <code>{r2.diff_pct:+.3f}%</code>\n\n"
+            f"   • Bullish Spread: <code>{r2.diff_pct:+.3f}%</code>{h4_cross_note}\n\n"
             f"3️⃣ <b>1H Volume Filter (Soft):</b> {vol_badge}\n"
             f"   • 7-Bar 1H Avg: <code>{r3.avg_vol_7:,.1f}</code>\n"
             f"   • 24-Bar 1H Avg: <code>{r3.avg_vol_24:,.1f}</code>\n"

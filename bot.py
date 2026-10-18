@@ -164,7 +164,7 @@ class BinanceScannerBot:
         if not r1.passed or not r2.passed:
             if not r1.passed and not r2.passed:
                 if r2.diff_pct > 0:
-                    reason = f"1D < 50 EMA & 4H already above (old cross, Diff +{r2.diff_pct:.2f}%)"
+                    reason = f"1D < 50 EMA & 4H old cross (>48h ago, Diff +{r2.diff_pct:.2f}%)"
                 elif abs(r2.diff_pct) <= 0.8:
                     reason = f"1D < 50 EMA & 4H near cross (Diff {r2.diff_pct:+.2f}%)"
                 else:
@@ -173,7 +173,7 @@ class BinanceScannerBot:
                 reason = f"1D candle below 50 EMA (${r1.current_close:.4f} < ${r1.ema50:.4f}) despite 4H cross"
             elif r1.passed and not r2.passed:
                 if r2.diff_pct > 0:
-                    reason = f"4H no fresh cross (already above 200 EMA, Diff +{r2.diff_pct:.2f}%)"
+                    reason = f"4H cross occurred > {config.CROSS_4H_LOOKBACK_HOURS}h ago (Diff +{r2.diff_pct:.2f}%)"
                 elif abs(r2.diff_pct) <= 0.8:
                     reason = f"4H approaching cross (Diff {r2.diff_pct:+.2f}%, watching for trigger!)"
                 else:
@@ -203,6 +203,9 @@ class BinanceScannerBot:
         else:
             r3 = evaluate_rule_3_volume(klines_1h)
 
+        is_fresh = getattr(r2, "is_fresh", True)
+        cross_warning = None if is_fresh else f"⚠️ 4H Cross formed {r2.hours_ago:.0f}h ago ({r2.candles_ago} candles ago)"
+
         signal = SignalResult(
             symbol=symbol,
             is_valid_signal=True,
@@ -213,7 +216,9 @@ class BinanceScannerBot:
             has_volume_warning=not r3.passed,
             candle_time=candle_time,
             vol_24h=vol_24h,
-            mcap=mcap
+            mcap=mcap,
+            is_fresh_cross=is_fresh,
+            cross_warning=cross_warning
         )
 
         return SymbolScanResult(
@@ -251,7 +256,7 @@ class BinanceScannerBot:
             return {}
 
         total_pairs = len(target_list)
-        print(f"Scanning {Fore.YELLOW}{total_pairs}{Style.RESET_ALL} qualifying pairs for 4H 50/200 EMA cross...")
+        print(f"Scanning {Fore.YELLOW}{total_pairs}{Style.RESET_ALL} qualifying pairs for 4H 50/200 EMA cross (Fresh + 48h lookback)...")
         print(f"{Fore.LIGHTBLACK_EX}Evaluating Rule 1 (1D > 50 EMA) & Rule 2 (4H 50/200 Golden Cross) pair by pair:{Style.RESET_ALL}\n")
 
         # Process in concurrent batches
@@ -288,9 +293,12 @@ class BinanceScannerBot:
 
                 # 4H column formatting
                 if res.r2 and res.r2.passed:
-                    h4_col = f"{Fore.GREEN}4H: FRESH CROSS!{Style.RESET_ALL} ({res.r2.diff_pct:+.2f}%)"
+                    if getattr(res.r2, "is_fresh", True):
+                        h4_col = f"{Fore.GREEN}4H: FRESH CROSS!{Style.RESET_ALL} ({res.r2.diff_pct:+.2f}%)"
+                    else:
+                        h4_col = f"{Fore.YELLOW}4H: RECENT CROSS{Style.RESET_ALL} ({res.r2.hours_ago:.0f}h ago, {res.r2.diff_pct:+.2f}%)"
                 elif res.r2 and res.r2.diff_pct > 0:
-                    h4_col = f"{Fore.YELLOW}4H: NO CROSS{Style.RESET_ALL} (Already above, +{res.r2.diff_pct:.2f}%)"
+                    h4_col = f"{Fore.LIGHTBLACK_EX}4H: NO CROSS{Style.RESET_ALL} (Old cross >48h, +{res.r2.diff_pct:.2f}%)"
                 elif res.r2 and abs(res.r2.diff_pct) <= 0.8:
                     h4_col = f"{Fore.CYAN}4H: NEAR CROSS{Style.RESET_ALL} ({res.r2.diff_pct:+.2f}%)"
                 elif res.r2:
@@ -300,9 +308,12 @@ class BinanceScannerBot:
 
                 # Status / Verdict column formatting
                 if res.is_valid_signal:
-                    verdict = f"{Fore.GREEN}🎯 [SIGNAL DETECTED] -> ALERT DISPATCHED!{Style.RESET_ALL}"
+                    if getattr(res.r2, "is_fresh", True):
+                        verdict = f"{Fore.GREEN}🎯 [SIGNAL DETECTED - FRESH] -> ALERT DISPATCHED!{Style.RESET_ALL}"
+                    else:
+                        verdict = f"{Fore.YELLOW}🎯 [SIGNAL DETECTED - ⚠️ NON-FRESH ({res.r2.hours_ago:.0f}h ago)] -> ALERT DISPATCHED!{Style.RESET_ALL}"
                     detected_signals.append(res.signal)
-                    logger.info(f"[{pair_counter:3d}/{total_pairs}] #{res.symbol}: SIGNAL DETECTED! Price: ${res.current_price}")
+                    logger.info(f"[{pair_counter:3d}/{total_pairs}] #{res.symbol}: SIGNAL DETECTED! Fresh: {getattr(res.r2, 'is_fresh', True)}, Price: ${res.current_price}")
                 else:
                     verdict = f"{Fore.LIGHTBLACK_EX}❌ {res.rejection_reason}{Style.RESET_ALL}"
 
@@ -314,13 +325,17 @@ class BinanceScannerBot:
 
         elapsed = time.time() - start_time
         r1_pct = (r1_passed_count / total_pairs * 100) if total_pairs else 0
+        fresh_signals = [s for s in detected_signals if getattr(s.rule2_4h, "is_fresh", True)]
+        recent_signals = [s for s in detected_signals if not getattr(s.rule2_4h, "is_fresh", True)]
+
         print(f"\n{Fore.CYAN}{'-'*65}{Style.RESET_ALL}")
         print(f"✅ Scan completed in {Fore.GREEN}{elapsed:.2f}s{Style.RESET_ALL}. Pairs checked: {total_pairs}")
         print(f"📊 Market Conditions Breakdown:")
         print(f"  • Rule 1 (1D Candle > 50 EMA): {Fore.YELLOW}{r1_passed_count} / {total_pairs}{Style.RESET_ALL} pairs passed ({r1_pct:.1f}%)")
-        print(f"  • Rule 2 (4H 50 EMA > 200 EMA): {Fore.YELLOW}{r2_above_count} / {total_pairs}{Style.RESET_ALL} pairs currently above (Old crosses)")
-        print(f"  • Rule 2 (Fresh Golden Cross): {Fore.GREEN}{len(detected_signals)}{Style.RESET_ALL} pairs triggered in current/prev candle")
-        print(f"Signals Found: {Fore.GREEN}{len(detected_signals)}{Style.RESET_ALL}")
+        print(f"  • Rule 2 (4H 50 EMA > 200 EMA): {Fore.YELLOW}{r2_above_count} / {total_pairs}{Style.RESET_ALL} pairs currently above")
+        print(f"  • Rule 2 (Fresh Golden Cross): {Fore.GREEN}{len(fresh_signals)}{Style.RESET_ALL} pairs triggered in current/prev candle")
+        print(f"  • Rule 2 (Recent Cross in 48h): {Fore.YELLOW}{len(recent_signals)}{Style.RESET_ALL} pairs triggered with non-fresh warning")
+        print(f"Signals Found: {Fore.GREEN}{len(detected_signals)}{Style.RESET_ALL} ({len(fresh_signals)} fresh, {len(recent_signals)} recent 48h)")
 
         # Watchlist: Top 5 closest pairs to Golden Cross (diff_pct nearest 0%)
         closest_candidates = [
@@ -389,6 +404,8 @@ class BinanceScannerBot:
             "r1_pct": r1_pct,
             "r2_above": r2_above_count,
             "signals_found": len(detected_signals),
+            "signals_fresh": len(fresh_signals),
+            "signals_recent": len(recent_signals),
             "elapsed": elapsed,
             "closest": top_closest_summary
         }
@@ -401,7 +418,8 @@ class BinanceScannerBot:
         print(f"{Fore.GREEN}   🚀 BINANCE FUTURES 1D/4H/1H SIGNAL SCANNER BOT   {Style.RESET_ALL}")
         print(f"{Fore.GREEN}===================================================={Style.RESET_ALL}")
         print(f"• Rule 1 (Hard): 1D Candle > 50 EMA (Fresh cross required: {config.DAILY_REQUIRE_FRESH_CROSS})")
-        print(f"• Rule 2 (Hard): 4H 50 EMA crossed 200 EMA in current candle")
+        lookback_str = f"Current/Prev candle + Last {config.CROSS_4H_LOOKBACK_HOURS}h (Non-fresh warning enabled)" if config.ALLOW_NON_FRESH_4H_CROSS else "Strictly Fresh Current/Prev Candle"
+        print(f"• Rule 2 (Hard): 4H 50 EMA crossed 200 EMA ({lookback_str})")
         print(f"• Rule 3 (Soft): 1H Volume 7-bar avg > 24-bar avg (warns if not met)")
         print(f"• Telegram Alerts: {'Configured' if self.notifier.is_configured() else 'NOT Configured (set .env)'}")
         print(f"• Scan Interval: Every {config.SCAN_INTERVAL_SECONDS} seconds")

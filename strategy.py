@@ -15,11 +15,14 @@ class Rule1DailyResult:
 @dataclass
 class Rule24HResult:
     passed: bool
-    trigger_type: str  # "Current Candle" or "Previous Candle (Closed)" or "None"
+    trigger_type: str  # "Current Candle", "Previous Candle", "Recent Cross (24h ago)"
     ema50: float
     ema200: float
     diff_pct: float
     details: str
+    is_fresh: bool = True
+    candles_ago: int = 0
+    hours_ago: float = 0.0
 
 @dataclass
 class Rule3VolumeResult:
@@ -41,6 +44,8 @@ class SignalResult:
     candle_time: int  # Timestamp for deduplication
     vol_24h: float = 0.0
     mcap: Optional[float] = None
+    is_fresh_cross: bool = True
+    cross_warning: Optional[str] = None
 
 
 def compute_ema(series: pd.Series, period: int) -> pd.Series:
@@ -100,15 +105,20 @@ def evaluate_rule_1_daily(klines_1d: List[Dict[str, Any]]) -> Rule1DailyResult:
 
 def evaluate_rule_2_4h_cross(klines_4h: List[Dict[str, Any]]) -> Rule24HResult:
     """
-    Rule 2 (Hard Filter): 4 hour me 50ema crossed 200ema in current candle.
+    Rule 2 (Hard Filter): 4 hour 50 EMA crossed 200 EMA.
     Checks:
-    - Current forming 4H candle: EMA 50 crossed above EMA 200 (ema50[-2] <= ema200[-2] and ema50[-1] > ema200[-1])
-    - Optionally previous closed candle: (ema50[-3] <= ema200[-3] and ema50[-2] > ema200[-2])
+    - Current forming 4H candle: EMA 50 crossed above EMA 200 (Fresh cross, 0 candles ago)
+    - Previous closed 4H candle: EMA 50 crossed above EMA 200 (Fresh cross, 1 candle ago)
+    - Lookback window (up to CROSS_4H_LOOKBACK_HOURS / 48 hours / 12 candles ago):
+      If 50 EMA crossed 200 EMA in the last 48 hours and is currently holding above 200 EMA,
+      triggers as a recent (non-fresh) cross with warning.
     """
-    if len(klines_4h) < config.EMA_SLOW_PERIOD + 15:
+    min_bars = config.EMA_SLOW_PERIOD + 20
+    if len(klines_4h) < min_bars:
         return Rule24HResult(
             passed=False, trigger_type="None", ema50=0.0, ema200=0.0, diff_pct=0.0,
-            details=f"Insufficient 4H data ({len(klines_4h)} bars, required at least {config.EMA_SLOW_PERIOD + 15})"
+            details=f"Insufficient 4H data ({len(klines_4h)} bars, required at least {min_bars})",
+            is_fresh=False, candles_ago=-1, hours_ago=-1.0
         )
 
     closes = pd.Series([k["close"] for k in klines_4h])
@@ -117,29 +127,69 @@ def evaluate_rule_2_4h_cross(klines_4h: List[Dict[str, Any]]) -> Rule24HResult:
 
     curr_ema50 = ema50.iloc[-1]
     curr_ema200 = ema200.iloc[-1]
-    prev_ema50 = ema50.iloc[-2]
-    prev_ema200 = ema200.iloc[-2]
-    prev2_ema50 = ema50.iloc[-3]
-    prev2_ema200 = ema200.iloc[-3]
+    diff_pct = ((curr_ema50 - curr_ema200) / curr_ema200) * 100.0
 
-    diff_pct = ((curr_ema50 - curr_ema200) / curr_ema200) * 100
+    # Must currently be in bullish alignment (50 EMA > 200 EMA)
+    if curr_ema50 <= curr_ema200:
+        return Rule24HResult(
+            passed=False,
+            trigger_type="None",
+            ema50=curr_ema50,
+            ema200=curr_ema200,
+            diff_pct=diff_pct,
+            details=f"4H 50 EMA below 200 EMA (Spread: {diff_pct:+.2f}%)",
+            is_fresh=False,
+            candles_ago=-1,
+            hours_ago=-1.0
+        )
 
-    cross_in_current = (prev_ema50 <= prev_ema200) and (curr_ema50 > curr_ema200)
-    cross_in_prev = (prev2_ema50 <= prev2_ema200) and (prev_ema50 > prev_ema200)
+    # Determine how many candles ago the golden cross occurred
+    max_lookback_candles = max(2, config.CROSS_4H_LOOKBACK_HOURS // 4)
+    max_check = min(max_lookback_candles + 1, len(closes) - config.EMA_SLOW_PERIOD)
 
-    passed = False
-    trigger_type = "None"
+    cross_candle = None
+    for i in range(1, max_check + 1):
+        curr_idx = -i
+        prev_idx = -(i + 1)
+        if ema50.iloc[prev_idx] <= ema200.iloc[prev_idx] and ema50.iloc[curr_idx] > ema200.iloc[curr_idx]:
+            cross_candle = i - 1  # 0 = current, 1 = prev, 2 = 2 candles ago (8h), etc.
+            break
 
-    if config.CHECK_4H_CURRENT_CANDLE and cross_in_current:
+    if cross_candle is None:
+        # Cross happened longer ago than the lookback window
+        return Rule24HResult(
+            passed=False,
+            trigger_type="Old Cross",
+            ema50=curr_ema50,
+            ema200=curr_ema200,
+            diff_pct=diff_pct,
+            details=f"4H 50 EMA above 200 EMA, but cross occurred > {config.CROSS_4H_LOOKBACK_HOURS}h ago (Diff: {diff_pct:+.2f}%)",
+            is_fresh=False,
+            candles_ago=999,
+            hours_ago=999.0
+        )
+
+    hours_ago = cross_candle * 4
+    if cross_candle == 0 and config.CHECK_4H_CURRENT_CANDLE:
         passed = True
+        is_fresh = True
         trigger_type = "Current 4H Candle (In Progress)"
-    elif config.CHECK_4H_PREVIOUS_CANDLE and cross_in_prev:
+    elif cross_candle == 1 and config.CHECK_4H_PREVIOUS_CANDLE:
         passed = True
+        is_fresh = True
         trigger_type = "Previous 4H Candle (Confirmed at Close)"
+    elif cross_candle >= 2 and config.ALLOW_NON_FRESH_4H_CROSS:
+        passed = True
+        is_fresh = False
+        trigger_type = f"Recent Cross ({hours_ago}h ago / {cross_candle} candles ago)"
+    else:
+        passed = False
+        is_fresh = (cross_candle <= 1)
+        trigger_type = f"Crossed {hours_ago}h ago (Disabled by config)"
 
     details = (
         f"4H 50 EMA: {curr_ema50:.4f}, 200 EMA: {curr_ema200:.4f} "
-        f"(Trigger: {trigger_type}, Diff: {diff_pct:+.3f}%)"
+        f"(Trigger: {trigger_type}, Diff: {diff_pct:+.3f}%, Fresh: {is_fresh})"
     )
 
     return Rule24HResult(
@@ -148,7 +198,10 @@ def evaluate_rule_2_4h_cross(klines_4h: List[Dict[str, Any]]) -> Rule24HResult:
         ema50=curr_ema50,
         ema200=curr_ema200,
         diff_pct=diff_pct,
-        details=details
+        details=details,
+        is_fresh=is_fresh,
+        candles_ago=cross_candle,
+        hours_ago=float(hours_ago)
     )
 
 

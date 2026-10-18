@@ -41,6 +41,10 @@ class Config:
     CHECK_4H_CURRENT_CANDLE: bool = os.getenv("CHECK_4H_CURRENT_CANDLE", "true").lower() in ("true", "1", "yes")
     # Also check candle that just closed (to avoid missing cross right at candle close)
     CHECK_4H_PREVIOUS_CANDLE: bool = os.getenv("CHECK_4H_PREVIOUS_CANDLE", "true").lower() in ("true", "1", "yes")
+    # Lookback window for 4H cross in hours (48 = check crosses formed up to 2 days / 12 candles ago)
+    CROSS_4H_LOOKBACK_HOURS: int = int(os.getenv("CROSS_4H_LOOKBACK_HOURS", "48"))
+    # If true, generates signal for crosses in previous 48 hours with a 'NOT FRESH' warning
+    ALLOW_NON_FRESH_4H_CROSS: bool = os.getenv("ALLOW_NON_FRESH_4H_CROSS", "true").lower() in ("true", "1", "yes")
 
     # Rule 3: 1H Volume Filter
     VOL_FAST_CANDLES: int = int(os.getenv("VOL_FAST_CANDLES", "7"))
